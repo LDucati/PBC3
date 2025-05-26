@@ -1,4 +1,20 @@
-ALL KEYWORDS BELOW CAN BE SPECIFIED AFTER THE CARTESIAN COORDINATES IN THE XYZ FILE OR
+THE PBC3 CODE IS COMPOSED BY TWO FILES:
+                                                                                 
+I)  main.f90: PROGRAM WRITTEN IN FORTRAN 90 LANGUAGE WHICH CALLS FUNCTIONS AND SUBROUTINES
+FROM geompar.f90 file
+
+II) geompar.f90: MODULE FILE CONTAINING FUNCTIONS AND SUBROUTINES
+                                                                                 
+TO COMPILE THE EXECUTABLE (pbc3.x) PLEASE EDIT THE Makefile TO SPECIFY FORTRAN COMPILER
+AND COMPILATION FLAGS AND THEN TYPE:
+                                                                                 
+% make
+
+TO RUN PBC3 you must type:
+
+% pbc3.x input.xyz 
+
+ALL KEYWORDS BELOW CAN BE SPECIFIED AFTER THE CARTESIAN COORDINATES IN THE INPUT.XYZ FILE OR
 
 IN THE EXTERNAL FILE CALLED "pbc.input"
 
