@@ -1,7 +1,7 @@
 THE PBC3 CODE IS COMPOSED BY TWO FILES:
                                                                                  
 I)  main.f90: PROGRAM WRITTEN IN FORTRAN 90 LANGUAGE WHICH CALLS FUNCTIONS AND SUBROUTINES
-FROM geompar.f90 file
+FROM geompar.f90 FILE
 
 II) geompar.f90: MODULE FILE CONTAINING FUNCTIONS AND SUBROUTINES
                                                                                  
