@@ -9,19 +9,19 @@ real(kind=dp) :: cartmass=0.0d0
 real(kind=dp), dimension(:), allocatable :: rxcoord, rycoord, rzcoord, rmap
 real(kind=dp), dimension(:), allocatable :: xcoord, ycoord, zcoord, amap, samap
 real(kind=dp), dimension(:), allocatable :: cmassx, cmassy, cmassz
-real(kind=dp), dimension(:), allocatable :: molecmass
+real(kind=dp), dimension(:), allocatable :: molecmass, cmabond
 integer, dimension(:), allocatable :: molec, imolec, iamap, moleccharge, iacharge, sacharge
-integer, dimension(:), allocatable :: acharge
+integer, dimension(:), allocatable :: acharge, cma_map
 integer, dimension(:,:), allocatable :: sbond, sang, sdih, itbody
-real(kind=dp), dimension(:,:), allocatable :: bond, molec_bond
-integer, dimension(:,:), allocatable :: molec_map
-logical, dimension(:), allocatable :: ltbody
+real(kind=dp), dimension(:,:), allocatable :: bond, molec_bond, cmbond
+integer, dimension(:,:), allocatable :: molec_map, cm_map
+logical, dimension(:), allocatable :: ltbody, cma_molec_mask
 logical, dimension(:,:), allocatable :: lbond, molec_mask
 logical :: full_cell=.False., ptrajec=.False., pcell=.False., pnns=.False., in_cell=.False., debug=.False., within=.False.
 logical :: cbonds=.False.,  pbonds=.False., pangs=.False., pdih=.False., molecule=.False., in_cellcmass=.False., linp=.False.
-logical :: pmolecule=.False., neighb=.False., aneighb=.False., pcart=.False., psolute=.False., paxsf=.False., topos=.False.
+logical :: pmolecule=.False., neighb=.False., cmneighb=.False., aneighb=.False., pcart=.False., psolute=.False., paxsf=.False.
 logical :: psbond=.False., psang=.False., psdih=.False., psmolecule=.False., pstrajec=.False., cmass=.False., psaxsf=.False.
-logical :: lcharge=.False., tbody=.False.
+logical :: lcharge=.False., tbody=.False., topos=.False.
 character (len=20) :: keywords
 character (len=3) :: ci
 character (len=2), dimension(:), allocatable :: rsymb
@@ -98,11 +98,23 @@ contains
 !
 !
 !
-! Calculates the distance between to atoms
+! Calculates the distance between two atoms
 real(kind=dp) function distan(na,nb)
 integer :: na, nb
 distan=sqrt((xcoord(na)-xcoord(nb))**2+(ycoord(na)-ycoord(nb))**2+(zcoord(na)-zcoord(nb))**2)
 end function distan
+
+! Calculates the distance between two center of masses
+real(kind=dp) function cmdistan(na,nb)
+integer :: na, nb
+cmdistan=sqrt((cmassx(na)-cmassx(nb))**2+(cmassy(na)-cmassy(nb))**2+(cmassz(na)-cmassz(nb))**2)
+end function cmdistan
+
+! Calculates the distance between atom and center of mass
+real(kind=dp) function cmadistan(na,nb)
+integer :: na, nb
+cmadistan=sqrt((cmassx(na)-xcoord(nb))**2+(cmassy(na)-ycoord(nb))**2+(cmassz(na)-zcoord(nb))**2)
+end function cmadistan
 
 ! Calculates angle between na and nc: na -- nb -- nc 
 real(kind=dp) function ang(na,nb,nc)
@@ -162,7 +174,7 @@ oz=(nx*my)-(ny*mx)
 ! COS THETA = n.m / |n|.|m|
 ! n.m / |n|.|m|
 dih=((nx*mx)+(ny*my)+(nz*mz))/((sqrt((nx*nx)+(ny*ny)+(nz*nz)))*(sqrt((mx*mx)+(my*my)+(mz*mz))))
-! FROM RAD TO GRAUS
+! FROM RAD TO DEGREES
 dih=acos(dih)*180/pi
 ! func sign(A,B) gives the A value with the sign of B
 dih=dsign(dih,((ox*cbx)+(oy*cby)+(oz*cbz)))
@@ -515,10 +527,18 @@ do
     molecule=.True.
     cmass=.True.
     read(1,FMT='(i3)',ERR=104,IOSTAT=m,END=101) n_neighbor
-    print '("   Number of nearest neighbor(s) requested: ",i2)',  n_neighbor
+    print '("   Number of nearest neighbor(s) requested: ",i3)',  n_neighbor
     104 if(n_neighbor == 0)then
       print '("  All nearest neighbor(s) will be printed: ")'
     end if
+!!
+  else if(keywords(:n) == 'CM NEIGHBOR')then
+    print '("  Center of Mass neighbors will be computed ")'
+    cmneighb=.True.
+    neighb=.True.
+    cbonds=.True.
+    molecule=.True.
+    cmass=.True.
 !!
   else if(keywords(:n) == 'ATOM NEIGHBOR')then
     print '("  Atom neighbors will be computed ")'
@@ -535,14 +555,14 @@ do
       print '("  All nearest neighbor(s) for solute will be printed: ")'
     end if
 !!
-   else if(keywords(:n) == 'PRINT SOLUTE')then
-     print '("  Solute geometry will be printed ")'
-     psolute=.True.
-     cbonds=.True.
-     molecule=.True.
-     pmolecule=.True.
-     cmass=.True.
-     pcart=.True.
+  else if(keywords(:n) == 'PRINT SOLUTE')then
+    print '("  Solute geometry will be printed ")'
+    psolute=.True.
+    cbonds=.True.
+    molecule=.True.
+    pmolecule=.True.
+    cmass=.True.
+    pcart=.True.
 !!
   else if(keywords(:n) == 'SOLUTE')then
     print '("  Setting up new solute: ")'
@@ -761,7 +781,7 @@ write (2,'(i5)') totatom
 if(lcharge) then
   write(2,'(" Mass ", f8.3, " Charge", i4)') cartmass, cartcharge
 else
-  write(2,'("mass ", f8.3)') cartmass
+  write(2,'("mass ", f10.3)') cartmass
 end if
 
 !
@@ -1226,6 +1246,9 @@ end subroutine molecules
 
 ! subroutine centermass
 subroutine centermass()
+integer :: i, k, m
+real(kind=dp) :: tmp
+!
 print '(" Calling center of mass subroutine")'
 !
 allocate(cmassx(tmolec),stat=m)
@@ -1237,6 +1260,12 @@ cmassy=0.0d0
 allocate(cmassz(tmolec),stat=m)
 if(m /= 0) print *, "allocating cmassz failed"
 cmassz=0.0d0
+allocate(cmbond(tmolec,tmolec),stat=m)
+if(m /= 0) print *, "allocating cmbond failed"
+cmbond=0.0d0
+allocate(cmabond(tmolec),stat=m)
+if(m /= 0) print *, "allocating cmbond failed"
+cmabond=0.0d0
 
 ! Calculating center of mass for each molecule
 do i=1, tmolec
@@ -1251,6 +1280,35 @@ do i=1, tmolec
   cmassy(i)=cmassy(i)/molecmass(i)
   cmassz(i)=cmassz(i)/molecmass(i)
 end do  
+
+! Calculating the distances between two center of masses
+do i=1, tmolec
+  do k=i+1, tmolec
+    cmbond(i,k)=cmdistan(i,k)
+    cmbond(k,i)=cmbond(i,k)
+  end do
+end do
+
+if(aneighb)then
+! Calculating the distances between an atom and a center of mass
+  tmp=0.0d0
+  do i=1, tmolec
+    !print *, i, 'molecula' 
+    !print *, molec(a_neighbor) 
+    do k=1, totatom
+      if(i.ne.molec(k)) cycle
+      tmp=cmadistan(molec(a_neighbor),k)
+      if(cmabond(i).eq.0.0d0) cmabond(i)=tmp
+      !if(k.eq.1) cmabond(i)=tmp
+      !print *, tmp, 'tmp', cmabond(i), 'cmabond(i)',  k, 'k', molec(k), 'molec(k)' 
+      if(tmp.lt.cmabond(i))then
+        cmabond(i)=tmp
+        !print *, cmabond(i), 'cmabond' 
+      end if
+    end do
+  end do
+end if
+!print *, cmabond
 !
 end subroutine centermass
 
@@ -1423,6 +1481,15 @@ if(m /= 0) print *, "allocating molec_bond failed"
 ! Allocating molec_map matrix
 allocate(molec_map(tmolec,tmolec),stat=m)
 if(m /= 0) print *, "allocating molec_map failed"
+! Allocating cma_map matrix
+allocate(cma_map(tmolec),stat=m)
+if(m /= 0) print *, "allocating cm_map failed"
+! Allocating cm_map matrix
+allocate(cm_map(tmolec,tmolec),stat=m)
+if(m /= 0) print *, "allocating cm_map failed"
+! Allocating cma_molec_mask matrix
+allocate(cma_molec_mask(tmolec),stat=m)
+if(m /= 0) print *, "allocating cm_map failed"
 ! Allocating molec_mask matrix
 allocate(molec_mask(tmolec,tmolec),stat=m)
 if(m /= 0) print *, "allocating molec_map failed"
@@ -1496,6 +1563,42 @@ do k=1, tmolec
   molec_map(k,slt), molec_map(slt,k),molec_mask(last_pos,slt), molec_mask(slt,last_pos)
 end do
 !
+if(cmneighb)then
+  molec_mask=.TRUE.
+!
+  if(debug) write(4,*) 'molec_mask shows all T elements: ', molec_mask(:,slt)
+!
+  do k=1, tmolec
+    if(debug) write(4,*) minloc(cmbond(:,slt),DIM=1,mask=molec_mask(:,slt))
+    if(debug) write(4,*) minval(cmbond(:,slt),DIM=1,mask=molec_mask(:,slt))
+    last_pos=minloc(cmbond(:,slt),DIM=1,mask=molec_mask(:,slt))
+    molec_mask(last_pos,slt)=.FALSE.
+    molec_mask(slt,last_pos)=.FALSE.
+    cm_map(k,slt)=last_pos
+    cm_map(slt,k)=last_pos
+    if(debug) write(4,*) k, slt, last_pos, cmbond(last_pos,slt),&
+    cm_map(k,slt), cm_map(slt,k),molec_mask(last_pos,slt), molec_mask(slt,last_pos)
+  end do
+end if
+!
+if(cmneighb.and.aneighb)then
+  cma_molec_mask=.TRUE.
+!
+  if(debug) write(4,*) 'molec_mask shows all T elements: ', cma_molec_mask(:)
+!
+  do k=1, tmolec
+    if(debug) write(4,*) minloc(cmabond(:),DIM=1,mask=cma_molec_mask(:))
+    if(debug) write(4,*) minval(cmabond(:),DIM=1,mask=cma_molec_mask(:))
+    last_pos=minloc(cmabond(:),DIM=1,mask=cma_molec_mask(:))
+    cma_molec_mask(last_pos)=.FALSE.
+    cma_map(k)=last_pos
+    cma_map(k)=last_pos
+    if(debug) write(4,*) k, slt, last_pos, cmabond(last_pos),&
+    !print *, k, slt, last_pos, cmabond(last_pos),&
+    cma_map(k), cma_molec_mask(last_pos)
+  end do
+end if
+!
 if(debug) write(4,*) 'END DEBUG INFO FROM NEIGHBOR SUBROUTINE'
 end subroutine neighbor
 
@@ -1542,7 +1645,93 @@ do l=1, n_neighbor+1
 end do
 !
 close(3,status='keep')
-
+!
+! Here it goes the cm neighbor printing
+!
+if(cmneighb)then
+! opening output file 3
+  pinp2=arg(1:index(arg,'.')-1)//'_cm-trajectory.xyz'
+  print *,'  New info file... ', pinp2
+  open(unit=3,file=pinp2,status='replace')
+!
+  m=0
+! if(debug)  write(4,*) ' printing ', n_neighbor, ' molecule(s) - n_neighbor'
+!
+! Needs to set up tmolec-1 due to the following loop
+  if(n_neighbor == 0) n_neighbor=tmolec-1
+  if(n_neighbor > tmolec)then
+    print '("  Number of requested is larger than total molecules found")'
+    print '("  Printing Total Number of Molecules ",i3)', tmolec
+    n_neighbor=tmolec-1
+  end if
+!
+!if(debug) write(4,*) slt, 'slt from print_trajec'
+  do l=1, n_neighbor+1
+    m=m+imolec(cm_map(l,slt))
+    write(3,'(i5)') m
+    if(lcharge)then
+      write(3,'(a15,1x,i5,1x,a4,i3,1x,a10,f9.5,1x,a10,1x,i3)') 'Adding Molecule', l, 'with', imolec(cm_map(l,slt)),&
+      'atom(s) R=', cmbond(cm_map(l,slt),slt), 'and charge', moleccharge(cm_map(l,slt))
+    else
+      write(3,'(a15,1x,i5,1x,a4,i3,1x,a10,f9.5)') 'Adding Molecule', l, 'with', imolec(cm_map(l,slt)),&
+      'atom(s) R=', cmbond(cm_map(l,slt),slt)
+    end if
+    do k=1,l
+      do j=1, totatom
+        if(molec(j) == cm_map(k,slt).and.(full_cell)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+        symb(j),xcoord(j)-cellparam,ycoord(j)-cellparam,zcoord(j)-cellparam
+        if(molec(j) == cm_map(k,slt).and.(full_cell.eqv..False.)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+        symb(j),xcoord(j),ycoord(j),zcoord(j)
+      end do
+    end do
+  end do
+!
+  close(3,status='keep')
+end if
+!
+! Here it goes the cma neighbor printing
+!
+if(cmneighb.and.aneighb)then
+! opening output file 3
+  pinp2=arg(1:index(arg,'.')-1)//'_cma-trajectory.xyz'
+  print *,'  New info file... ', pinp2
+  open(unit=3,file=pinp2,status='replace')
+!
+  m=0
+! if(debug)  write(4,*) ' printing ', n_neighbor, ' molecule(s) - n_neighbor'
+!
+! Needs to set up tmolec-1 due to the following loop
+  if(n_neighbor == 0) n_neighbor=tmolec-1
+  if(n_neighbor > tmolec)then
+    print '("  Number of requested is larger than total molecules found")'
+    print '("  Printing Total Number of Molecules ",i3)', tmolec
+    n_neighbor=tmolec-1
+  end if
+!
+!if(debug) write(4,*) slt, 'slt from print_trajec'
+  do l=1, n_neighbor+1
+    m=m+imolec(cma_map(l))
+    write(3,'(i5)') m
+    if(lcharge)then
+      write(3,'(a15,1x,i5,1x,a4,i3,1x,a10,f9.5,1x,a10,1x,i3)') 'Adding Molecule', l, 'with', imolec(cma_map(l)),&
+      'atom(s) R=', cmabond(cma_map(l)), 'and charge', moleccharge(cma_map(l))
+    else
+      write(3,'(a15,1x,i5,1x,a4,i3,1x,a10,f9.5)') 'Adding Molecule', l, 'with', imolec(cma_map(l)),&
+      'atom(s) R=', cmabond(cma_map(l))
+    end if
+    do k=1,l
+      do j=1, totatom
+        if(molec(j) == cma_map(k).and.(full_cell)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+        symb(j),xcoord(j)-cellparam,ycoord(j)-cellparam,zcoord(j)-cellparam
+        if(molec(j) == cma_map(k).and.(full_cell.eqv..False.)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+        symb(j),xcoord(j),ycoord(j),zcoord(j)
+      end do
+    end do
+  end do
+!
+  close(3,status='keep')
+end if
+!
 if(pstrajec)then
   do n=1, n_neighbor+1,tstep
     write(ci,FMT='(i3.3)') n-1
@@ -1573,6 +1762,68 @@ if(pstrajec)then
     end do
     close(3,status='keep')
   end do
+  if(cmneighb)then
+    do n=1, n_neighbor+1,tstep
+      write(ci,FMT='(i3.3)') n-1
+      pinp2=arg(1:index(arg,'.')-1)//'_'//ci//'_cm-trajectory.xyz'
+      print *,'  New info file... ', pinp2
+      open(unit=3,file=pinp2,status='replace')
+      m=0
+      i=0
+      do l=1, n_neighbor+1
+        m=m+imolec(cm_map(l,slt))
+        if(lcharge) i=i+moleccharge(cm_map(l,slt))
+        if(l == n)then
+          write(3,'(i5)') m
+          if(lcharge)then
+            write(3,'(a10,1x,i5,1x,a31,1x,i3)') 'Solute and', l-1, 'nearest neighbor(s) with charge', i   
+          else
+            write(3,'(a10,1x,i5,1x,a19)') 'Solute and', l-1, 'nearest neighbor(s)'
+          end if
+          do k=1,l
+            do j=1, totatom
+              if(molec(j) == cm_map(k,slt).and.(full_cell)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+              symb(j),xcoord(j)-cellparam,ycoord(j)-cellparam,zcoord(j)-cellparam
+              if(molec(j) == cm_map(k,slt).and.(full_cell.eqv..False.)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+              symb(j),xcoord(j),ycoord(j),zcoord(j)
+            end do
+          end do
+        end if
+      end do
+      close(3,status='keep')
+    end do
+  end if
+  if(cmneighb.and.aneighb)then
+    do n=1, n_neighbor+1,tstep
+      write(ci,FMT='(i3.3)') n-1
+      pinp2=arg(1:index(arg,'.')-1)//'_'//ci//'_cma-trajectory.xyz'
+      print *,'  New info file... ', pinp2
+      open(unit=3,file=pinp2,status='replace')
+      m=0
+      i=0
+      do l=1, n_neighbor+1
+        m=m+imolec(cma_map(l))
+        if(lcharge) i=i+moleccharge(cma_map(l))
+        if(l == n)then
+          write(3,'(i5)') m
+          if(lcharge)then
+            write(3,'(a10,1x,i5,1x,a31,1x,i3)') 'Solute and', l-1, 'nearest neighbor(s) with charge', i   
+          else
+            write(3,'(a10,1x,i5,1x,a19)') 'Solute and', l-1, 'nearest neighbor(s)'
+          end if
+          do k=1,l
+            do j=1, totatom
+              if(molec(j) == cma_map(k).and.(full_cell)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+              symb(j),xcoord(j)-cellparam,ycoord(j)-cellparam,zcoord(j)-cellparam
+              if(molec(j) == cma_map(k).and.(full_cell.eqv..False.)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+              symb(j),xcoord(j),ycoord(j),zcoord(j)
+            end do
+          end do
+        end if
+      end do
+      close(3,status='keep')
+    end do
+  end if
 end if
 !
 end subroutine print_trajectory
@@ -1783,6 +2034,48 @@ do k=1,n_neighbor+1
   end do
 end do
 close(3,status='keep')
+!
+! opening output file 3
+if(cmneighb)then
+  pinp2=arg(1:index(arg,'.')-1)//'_cmneighbor.xyz'
+  print *,'  New info file... ', pinp2
+  open(unit=3,file=pinp2,status='replace')
+!
+  i=0
+  m=0
+!   if(debug) write(4,*) ' printing ', n_neighbor, ' molecule(s) - n_neighbor'
+!
+! Needs to set up tmolec-1 due to the following loop
+!  if(debug) write(4,*) slt, 'slt from print_nns'
+  if(n_neighbor == 0) n_neighbor=tmolec-1
+  if(n_neighbor >= tmolec)then
+    print '("  Requested number is larger than total molecules found")'
+    print '("  Printing Total Number of Molecules ",i3)', tmolec
+    n_neighbor=tmolec-1
+  end if
+!   if(debug)  write(4,*) ' printing ', tmolec, ' molecule(s) - tmolec' 
+!
+! Calculating the number of atoms of n_neighbor+1
+  do l=1, n_neighbor+1
+    m=m+imolec(cm_map(l,slt))
+    if(lcharge) i=i+moleccharge(cm_map(l,slt))
+  end do
+  write(3,'(i5)') m
+  if(lcharge)then
+    write(3,'(a20,1x,i5,1x,a31,i3)') 'Solute Molecule with', n_neighbor, 'Nearest Neighbor(s) with charge', i
+  else
+    write(3,'(a20,1x,i5,1x,a19)') 'Solute Molecule with', n_neighbor, 'Nearest Neighbor(s)'
+  end if  
+  do k=1,n_neighbor+1
+    do j=1, totatom
+      if(molec(j) == cm_map(k,slt).and.(full_cell)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+      symb(j),xcoord(j)-cellparam,ycoord(j)-cellparam,zcoord(j)-cellparam
+      if(molec(j) == cm_map(k,slt).and.(full_cell.eqv..False.)) write (3,'(A2,2X,f12.8,2X,f12.8,2X,f12.8)')&
+      symb(j),xcoord(j),ycoord(j),zcoord(j)
+    end do
+  end do
+close(3,status='keep')
+end if
 end subroutine print_neighbor
 !
 end module param
